@@ -1,4 +1,4 @@
-module boltstore
+module github.com/uncle-gua/boltstore
 
 go 1.22.1
 
