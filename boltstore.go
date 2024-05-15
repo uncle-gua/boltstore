@@ -11,7 +11,7 @@ import (
 	"github.com/uncle-gua/bolthold"
 )
 
-var _ sessions.Store = (*BoltStore)(nil)
+var _ sessions.Store = (*Store)(nil)
 
 var ErrInvalidId = errors.New("boltstore: invalid session id")
 
@@ -23,7 +23,7 @@ type Session struct {
 }
 
 // BoltStore stores sessions in BoltDB
-type BoltStore struct {
+type Store struct {
 	Codecs  []securecookie.Codec
 	options *sessions.Options
 	store   *bolthold.Store
@@ -32,8 +32,8 @@ type BoltStore struct {
 var base32RawStdEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // NewBoltStore returns a new BoltStore.
-func NewBoltStore(s *bolthold.Store, maxAge int, keyPairs ...[]byte) *BoltStore {
-	store := &BoltStore{
+func New(s *bolthold.Store, maxAge int, keyPairs ...[]byte) *Store {
+	store := &Store{
 		Codecs: securecookie.CodecsFromPairs(keyPairs...),
 		options: &sessions.Options{
 			Path:   "/",
@@ -49,14 +49,14 @@ func NewBoltStore(s *bolthold.Store, maxAge int, keyPairs ...[]byte) *BoltStore 
 
 // Get registers and returns a session for the given name and session store.
 // It returns a new session if there are no sessions registered for the name.
-func (m *BoltStore) Get(r *http.Request, name string) (
+func (m *Store) Get(r *http.Request, name string) (
 	*sessions.Session, error,
 ) {
 	return sessions.GetRegistry(r).Get(m, name)
 }
 
 // New returns a session for the given name without adding it to the registry.
-func (m *BoltStore) New(r *http.Request, name string) (
+func (m *Store) New(r *http.Request, name string) (
 	*sessions.Session, error,
 ) {
 	session := sessions.NewSession(m, name)
@@ -91,7 +91,7 @@ func (m *BoltStore) New(r *http.Request, name string) (
 }
 
 // Save saves all sessions registered for the current request.
-func (m *BoltStore) Save(_ *http.Request, w http.ResponseWriter,
+func (m *Store) Save(_ *http.Request, w http.ResponseWriter,
 	session *sessions.Session,
 ) error {
 	if session.Options.MaxAge < 0 {
@@ -124,7 +124,7 @@ func (m *BoltStore) Save(_ *http.Request, w http.ResponseWriter,
 // MaxAge sets the maximum age for the store and the underlying cookie
 // implementation. Individual sessions can be deleted by setting Options.MaxAge
 // = -1 for that session.
-func (m *BoltStore) MaxAge(age int) {
+func (m *Store) MaxAge(age int) {
 	m.options.MaxAge = age
 
 	// Set the maxAge for each securecookie instance.
@@ -135,7 +135,7 @@ func (m *BoltStore) MaxAge(age int) {
 	}
 }
 
-func (m *BoltStore) load(session *sessions.Session) error {
+func (m *Store) load(session *sessions.Session) error {
 	s := Session{}
 	if err := m.store.Get(session.ID, &s); err != nil {
 		return err
@@ -149,7 +149,7 @@ func (m *BoltStore) load(session *sessions.Session) error {
 	return nil
 }
 
-func (m *BoltStore) upsert(session *sessions.Session) error {
+func (m *Store) upsert(session *sessions.Session) error {
 	var modified time.Time
 	if val, ok := session.Values["modified"]; ok {
 		modified, ok = val.(time.Time)
@@ -175,6 +175,6 @@ func (m *BoltStore) upsert(session *sessions.Session) error {
 	return m.store.Upsert(session.ID, &s)
 }
 
-func (m *BoltStore) delete(session *sessions.Session) error {
+func (m *Store) delete(session *sessions.Session) error {
 	return m.store.Delete(session.ID, &Session{})
 }
