@@ -2,8 +2,8 @@ package boltstore
 
 import (
 	"encoding/base32"
+	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -11,160 +11,170 @@ import (
 	"github.com/uncle-gua/bolthold"
 )
 
-const sessionIDLen = 32
-const defaultMaxAge = 60 * 60 * 24 * 30 // 30 days
-const defaultPath = "/"
+var _ sessions.Store = (*BoltStore)(nil)
 
-type BoltStore struct {
-	store   *bolthold.Store
-	Codecs  []securecookie.Codec
-	Options *sessions.Options
-}
+var ErrInvalidId = errors.New("boltstore: invalid session id")
 
+// Session object store in BoltDB
 type Session struct {
-	ID        uint64 `boltholdKey:"ID"`
-	Session   string `boltholdIndex:"Session"`
-	Data      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	ExpiresAt time.Time `boltholdIndex:"ExpiresAt"`
+	ID       string `boltholdKey:"ID"`
+	Data     string
+	Modified time.Time `boltholdIndex:"Modified"`
 }
 
-func New(store *bolthold.Store, keyPairs ...[]byte) *BoltStore {
-	st := &BoltStore{
-		store:  store,
+// BoltStore stores sessions in BoltDB
+type BoltStore struct {
+	Codecs  []securecookie.Codec
+	options *sessions.Options
+	store   *bolthold.Store
+}
+
+var base32RawStdEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// NewBoltStore returns a new BoltStore.
+func NewBoltStore(s *bolthold.Store, maxAge int, keyPairs ...[]byte) *BoltStore {
+	store := &BoltStore{
 		Codecs: securecookie.CodecsFromPairs(keyPairs...),
-		Options: &sessions.Options{
-			Path:   defaultPath,
-			MaxAge: defaultMaxAge,
+		options: &sessions.Options{
+			Path:   "/",
+			MaxAge: maxAge,
 		},
+		store: s,
 	}
 
-	return st
+	store.MaxAge(maxAge)
+
+	return store
 }
 
-func (st *BoltStore) Get(r *http.Request, name string) (*sessions.Session, error) {
-	return sessions.GetRegistry(r).Get(st, name)
+// Get registers and returns a session for the given name and session store.
+// It returns a new session if there are no sessions registered for the name.
+func (m *BoltStore) Get(r *http.Request, name string) (
+	*sessions.Session, error,
+) {
+	return sessions.GetRegistry(r).Get(m, name)
 }
 
-func (st *BoltStore) New(r *http.Request, name string) (*sessions.Session, error) {
-	session := sessions.NewSession(st, name)
-	opts := *st.Options
-	session.Options = &opts
+// New returns a session for the given name without adding it to the registry.
+func (m *BoltStore) New(r *http.Request, name string) (
+	*sessions.Session, error,
+) {
+	session := sessions.NewSession(m, name)
+	session.Options = &sessions.Options{
+		Path:     m.options.Path,
+		MaxAge:   m.options.MaxAge,
+		Domain:   m.options.Domain,
+		Secure:   m.options.Secure,
+		HttpOnly: m.options.HttpOnly,
+		SameSite: m.options.SameSite,
+	}
+
 	session.IsNew = true
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return session, err
+	}
 
-	st.MaxAge(st.Options.MaxAge)
+	if err = securecookie.DecodeMulti(name, cookie.Value, &session.ID, m.Codecs...); err != nil {
+		return session, err
+	}
 
-	s := st.getSessionFromCookie(r, session.Name())
-	if s != nil {
-		if err := securecookie.DecodeMulti(session.Name(), s.Data, &session.Values, st.Codecs...); err != nil {
-			return session, nil
+	if err = m.load(session); err != nil {
+		if err != bolthold.ErrNotFound {
+			return session, err
 		}
-		session.ID = s.Session
+	} else {
 		session.IsNew = false
 	}
 
 	return session, nil
 }
 
-func (st *BoltStore) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
-	s := st.getSessionFromCookie(r, session.Name())
-
+// Save saves all sessions registered for the current request.
+func (m *BoltStore) Save(_ *http.Request, w http.ResponseWriter,
+	session *sessions.Session,
+) error {
 	if session.Options.MaxAge < 0 {
-		if s != nil {
-			if err := st.store.Delete(s.ID, s); err != nil {
-				return err
-			}
+		if err := m.delete(session); err != nil {
+			return err
 		}
 		http.SetCookie(w, sessions.NewCookie(session.Name(), "", session.Options))
 		return nil
 	}
 
-	data, err := securecookie.EncodeMulti(session.Name(), session.Values, st.Codecs...)
+	if session.ID == "" {
+		session.ID = base32RawStdEncoding.EncodeToString(
+			securecookie.GenerateRandomKey(32))
+	}
+
+	if err := m.upsert(session); err != nil {
+		return err
+	}
+
+	encoded, err := securecookie.EncodeMulti(session.Name(), session.ID,
+		m.Codecs...)
 	if err != nil {
 		return err
 	}
-	now := time.Now()
-	expire := now.Add(time.Second * time.Duration(session.Options.MaxAge))
 
-	if s == nil {
-		session.ID = strings.TrimRight(
-			base32.StdEncoding.EncodeToString(
-				securecookie.GenerateRandomKey(sessionIDLen)), "=")
-		s = &Session{
-			Session:   session.ID,
-			Data:      data,
-			CreatedAt: now,
-			UpdatedAt: now,
-			ExpiresAt: expire,
-		}
-		if err := st.store.Insert(bolthold.NextSequence(), s); err != nil {
-			return err
-		}
-	} else {
-		s.Data = data
-		s.UpdatedAt = now
-		s.ExpiresAt = expire
-		if err := st.store.Update(s.ID, s); err != nil {
-			return err
-		}
-	}
-
-	id, err := securecookie.EncodeMulti(session.Name(), s.ID, st.Codecs...)
-	if err != nil {
-		return err
-	}
-	http.SetCookie(w, sessions.NewCookie(session.Name(), id, session.Options))
-
+	http.SetCookie(w, sessions.NewCookie(session.Name(), encoded, session.Options))
 	return nil
 }
 
-func (st *BoltStore) getSessionFromCookie(r *http.Request, name string) *Session {
-	if cookie, err := r.Cookie(name); err == nil {
-		sessionID := ""
-		if err := securecookie.DecodeMulti(name, cookie.Value, &sessionID, st.Codecs...); err != nil {
-			return nil
-		}
-		s := &Session{}
-		err := st.store.FindOne(s, bolthold.Where("Session").Eq(sessionID).And("ExpiresAt").Gt(time.Now()))
-		if err != nil {
-			return nil
-		}
-		return s
-	}
-	return nil
-}
+// MaxAge sets the maximum age for the store and the underlying cookie
+// implementation. Individual sessions can be deleted by setting Options.MaxAge
+// = -1 for that session.
+func (m *BoltStore) MaxAge(age int) {
+	m.options.MaxAge = age
 
-func (st *BoltStore) MaxAge(age int) {
-	st.Options.MaxAge = age
-	for _, codec := range st.Codecs {
+	// Set the maxAge for each securecookie instance.
+	for _, codec := range m.Codecs {
 		if sc, ok := codec.(*securecookie.SecureCookie); ok {
 			sc.MaxAge(age)
 		}
 	}
 }
 
-func (st *BoltStore) MaxLength(l int) {
-	for _, c := range st.Codecs {
-		if codec, ok := c.(*securecookie.SecureCookie); ok {
-			codec.MaxLength(l)
-		}
+func (m *BoltStore) load(session *sessions.Session) error {
+	s := Session{}
+	if err := m.store.Get(session.ID, &s); err != nil {
+		return err
 	}
+
+	if err := securecookie.DecodeMulti(session.Name(), s.Data, &session.Values,
+		m.Codecs...); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (st *BoltStore) Cleanup() {
-	st.store.DeleteMatching(&Session{}, bolthold.Where("ExpiresAt").Le(time.Now()))
+func (m *BoltStore) upsert(session *sessions.Session) error {
+	var modified time.Time
+	if val, ok := session.Values["modified"]; ok {
+		modified, ok = val.(time.Time)
+		if !ok {
+			return errors.New("boltstore: invalid modified value")
+		}
+	} else {
+		modified = time.Now()
+	}
+
+	encoded, err := securecookie.EncodeMulti(session.Name(), session.Values,
+		m.Codecs...)
+	if err != nil {
+		return err
+	}
+
+	s := Session{
+		ID:       session.ID,
+		Data:     encoded,
+		Modified: modified,
+	}
+
+	return m.store.Upsert(session.ID, &s)
 }
 
-func (st *BoltStore) PeriodicCleanup(interval time.Duration, quit <-chan struct{}) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-t.C:
-			st.Cleanup()
-		case <-quit:
-			return
-		}
-	}
+func (m *BoltStore) delete(session *sessions.Session) error {
+	return m.store.Delete(session.ID, &Session{})
 }
