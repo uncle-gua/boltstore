@@ -25,7 +25,7 @@ type Session struct {
 // BoltStore stores sessions in BoltDB
 type Store struct {
 	Codecs  []securecookie.Codec
-	options *sessions.Options
+	Options *sessions.Options
 	store   *bolthold.Store
 }
 
@@ -35,7 +35,7 @@ var base32RawStdEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 func New(s *bolthold.Store, maxAge int, keyPairs ...[]byte) *Store {
 	store := &Store{
 		Codecs: securecookie.CodecsFromPairs(keyPairs...),
-		options: &sessions.Options{
+		Options: &sessions.Options{
 			Path:   "/",
 			MaxAge: maxAge,
 		},
@@ -61,12 +61,12 @@ func (m *Store) New(r *http.Request, name string) (
 ) {
 	session := sessions.NewSession(m, name)
 	session.Options = &sessions.Options{
-		Path:     m.options.Path,
-		MaxAge:   m.options.MaxAge,
-		Domain:   m.options.Domain,
-		Secure:   m.options.Secure,
-		HttpOnly: m.options.HttpOnly,
-		SameSite: m.options.SameSite,
+		Path:     m.Options.Path,
+		MaxAge:   m.Options.MaxAge,
+		Domain:   m.Options.Domain,
+		Secure:   m.Options.Secure,
+		HttpOnly: m.Options.HttpOnly,
+		SameSite: m.Options.SameSite,
 	}
 
 	session.IsNew = true
@@ -125,7 +125,7 @@ func (m *Store) Save(_ *http.Request, w http.ResponseWriter,
 // implementation. Individual sessions can be deleted by setting Options.MaxAge
 // = -1 for that session.
 func (m *Store) MaxAge(age int) {
-	m.options.MaxAge = age
+	m.Options.MaxAge = age
 
 	// Set the maxAge for each securecookie instance.
 	for _, codec := range m.Codecs {
