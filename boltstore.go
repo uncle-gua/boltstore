@@ -72,7 +72,7 @@ func (m *Store) New(r *http.Request, name string) (
 	session.IsNew = true
 	cookie, err := r.Cookie(name)
 	if err != nil {
-		return session, err
+		return session, nil
 	}
 
 	if err = securecookie.DecodeMulti(name, cookie.Value, &session.ID, m.Codecs...); err != nil {

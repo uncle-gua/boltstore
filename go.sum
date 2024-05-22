@@ -19,6 +19,8 @@ github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsT
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/uncle-gua/bolthold v0.0.0-20240428073504-0022c4f0eefd h1:0qH6w9XAUDK8V9enwTSg9Usq48MkKUMiwi9IYb4S6D0=
 github.com/uncle-gua/bolthold v0.0.0-20240428073504-0022c4f0eefd/go.mod h1:s/YLEZi1NBuH4W5u56ew1abPdAz75wruk2H3GrfgiIE=
+github.com/uncle-gua/bolthold v0.0.0-20240515020857-2d18ffc87dbc h1:0EkujsuNh7tRO4G3YMP24w6PruNwwh0r48PKAR5FskA=
+github.com/uncle-gua/bolthold v0.0.0-20240515020857-2d18ffc87dbc/go.mod h1:4yFPQggUfwGyHXIjJktU24P/HOLnpZykuCv0e2JbW1U=
 go.etcd.io/bbolt v1.3.9/go.mod h1:zaO32+Ti0PK1ivdPtgMESzuzL2VPoIG1PCQNvOdo/dE=
 go.etcd.io/bbolt v1.3.10 h1:+BqfJTcCzTItrop8mq/lbzL8wSGtj94UO/3U31shqG0=
 go.etcd.io/bbolt v1.3.10/go.mod h1:bK3UQLPJZly7IlNmV7uVHJDxfe5aK9Ll93e/74Y9oEQ=
